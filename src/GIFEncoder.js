@@ -19,8 +19,7 @@ function ByteArray() {
 ByteArray.pageSize = 4096;
 ByteArray.charMap = {};
 
-for (var i = 0; i < 256; i++)
-  ByteArray.charMap[i] = String.fromCharCode(i);
+for (var i = 0; i < 256; i++) ByteArray.charMap[i] = String.fromCharCode(i);
 
 ByteArray.prototype.newPage = function() {
   this.pages[++this.page] = new Uint8Array(ByteArray.pageSize);
@@ -43,13 +42,11 @@ ByteArray.prototype.writeByte = function(val) {
 };
 
 ByteArray.prototype.writeUTFBytes = function(string) {
-  for (var l = string.length, i = 0; i < l; i++)
-    this.writeByte(string.charCodeAt(i));
+  for (var l = string.length, i = 0; i < l; i++) this.writeByte(string.charCodeAt(i));
 };
 
 ByteArray.prototype.writeBytes = function(array, offset, length) {
-  for (var l = length || array.length, i = offset || 0; i < l; i++)
-    this.writeByte(array[i]);
+  for (var l = length || array.length, i = offset || 0; i < l; i++) this.writeByte(array[i]);
 };
 
 function GIFEncoder(width, height) {
@@ -69,7 +66,8 @@ function GIFEncoder(width, height) {
   // frame delay (hundredths)
   this.delay = 0;
 
-  this.image = null; // current frame
+  this.image = null; // current frame with white background
+  this.no_bg_image = null; //current frame
   this.pixels = null; // BGR byte array from frame
   this.indexedPixels = null; // converted frame indexed to palette
   this.colorDepth = null; // number of bit planes
@@ -142,8 +140,9 @@ GIFEncoder.prototype.setTransparent = function(color) {
   actually deferred until the next frame is received so that timing
   data can be inserted.  Invoking finish() flushes all frames.
 */
-GIFEncoder.prototype.addFrame = function(imageData) {
-  this.image = imageData;
+GIFEncoder.prototype.addFrame = function(imageData, bgImageData) {
+  this.image = bgImageData;
+  this.no_bg_image = imageData;
 
   this.colorTab = this.globalPalette && this.globalPalette.slice ? this.globalPalette : null;
 
@@ -218,20 +217,26 @@ GIFEncoder.prototype.setGlobalPalette = function(palette) {
   calculated palette after the first frame is added.
 */
 GIFEncoder.prototype.getGlobalPalette = function() {
-  return (this.globalPalette && this.globalPalette.slice && this.globalPalette.slice(0)) || this.globalPalette;
+  return (
+    (this.globalPalette && this.globalPalette.slice && this.globalPalette.slice(0)) ||
+    this.globalPalette
+  );
 };
 
 /*
   Writes GIF file header
 */
 GIFEncoder.prototype.writeHeader = function() {
-  this.out.writeUTFBytes("GIF89a");
+  this.out.writeUTFBytes('GIF89a');
 };
 
 /*
   Analyzes current frame colors and creates color map.
 */
 GIFEncoder.prototype.analyzePixels = function() {
+  var len = this.pixels.length;
+  var nPix = len / 3;
+
   if (!this.colorTab) {
     this.neuQuant = new NeuQuant(this.pixels, this.sample);
     this.neuQuant.buildColormap(); // create reduced palette
@@ -240,7 +245,10 @@ GIFEncoder.prototype.analyzePixels = function() {
 
   // map image pixels to new palette
   if (this.dither) {
-    this.ditherPixels(this.dither.replace('-serpentine', ''), this.dither.match(/-serpentine/) !== null);
+    this.ditherPixels(
+      this.dither.replace('-serpentine', ''),
+      this.dither.match(/-serpentine/) !== null
+    );
   } else {
     this.indexPixels();
   }
@@ -252,6 +260,11 @@ GIFEncoder.prototype.analyzePixels = function() {
   // get closest match to transparent color if specified
   if (this.transparent !== null) {
     this.transIndex = this.findClosest(this.transparent, true);
+    for (var pixelIndex = 0; pixelIndex < nPix; pixelIndex++) {
+      if (this.no_bg_image[pixelIndex * 4 + 3] == 0) {
+        this.indexedPixels[pixelIndex] = this.transIndex;
+      }
+    }
   }
 };
 
@@ -281,13 +294,13 @@ GIFEncoder.prototype.ditherPixels = function(kernel, serpentine) {
     FalseFloydSteinberg: [
       [3 / 8, 1, 0],
       [3 / 8, 0, 1],
-      [2 / 8, 1, 1]
+      [2 / 8, 1, 1],
     ],
     FloydSteinberg: [
       [7 / 16, 1, 0],
       [3 / 16, -1, 1],
       [5 / 16, 0, 1],
-      [1 / 16, 1, 1]
+      [1 / 16, 1, 1],
     ],
     Stucki: [
       [8 / 42, 1, 0],
@@ -301,7 +314,7 @@ GIFEncoder.prototype.ditherPixels = function(kernel, serpentine) {
       [2 / 42, -1, 2],
       [4 / 42, 0, 2],
       [2 / 42, 1, 2],
-      [1 / 42, 2, 2]
+      [1 / 42, 2, 2],
     ],
     Atkinson: [
       [1 / 8, 1, 0],
@@ -309,8 +322,8 @@ GIFEncoder.prototype.ditherPixels = function(kernel, serpentine) {
       [1 / 8, -1, 1],
       [1 / 8, 0, 1],
       [1 / 8, 1, 1],
-      [1 / 8, 0, 2]
-    ]
+      [1 / 8, 0, 2],
+    ],
   };
 
   if (!kernel || !kernels[kernel]) {
@@ -327,12 +340,14 @@ GIFEncoder.prototype.ditherPixels = function(kernel, serpentine) {
   this.indexedPixels = new Uint8Array(this.pixels.length / 3);
 
   for (var y = 0; y < height; y++) {
-
     if (serpentine) direction = direction * -1;
 
-    for (var x = (direction == 1 ? 0 : width - 1), xend = (direction == 1 ? width : 0); x !== xend; x += direction) {
-
-      index = (y * width) + x;
+    for (
+      var x = direction == 1 ? 0 : width - 1, xend = direction == 1 ? width : 0;
+      x !== xend;
+      x += direction
+    ) {
+      index = y * width + x;
       // Get original colour
       var idx = index * 3;
       var r1 = data[idx];
@@ -352,12 +367,16 @@ GIFEncoder.prototype.ditherPixels = function(kernel, serpentine) {
       var eg = g1 - g2;
       var eb = b1 - b2;
 
-      for (var i = (direction == 1 ? 0: ds.length - 1), end = (direction == 1 ? ds.length : 0); i !== end; i += direction) {
+      for (
+        var i = direction == 1 ? 0 : ds.length - 1, end = direction == 1 ? ds.length : 0;
+        i !== end;
+        i += direction
+      ) {
         var x1 = ds[i][1]; // *direction;  //  Should this by timesd by direction?..to make the kernel go in the opposite direction....got no idea....
         var y1 = ds[i][2];
         if (x1 + x >= 0 && x1 + x < width && y1 + y >= 0 && y1 + y < height) {
           var d = ds[i][0];
-          idx = index + x1 + (y1 * width);
+          idx = index + x1 + y1 * width;
           idx *= 3;
 
           data[idx] = Math.max(0, Math.min(255, data[idx] + er * d));
@@ -373,7 +392,7 @@ GIFEncoder.prototype.ditherPixels = function(kernel, serpentine) {
   Returns index of palette color closest to c
 */
 GIFEncoder.prototype.findClosest = function(c, used) {
-  return this.findClosestRGB((c & 0xFF0000) >> 16, (c & 0x00FF00) >> 8, (c & 0x0000FF), used);
+  return this.findClosestRGB((c & 0xff0000) >> 16, (c & 0x00ff00) >> 8, c & 0x0000ff, used);
 };
 
 GIFEncoder.prototype.findClosestRGB = function(r, g, b, used) {
@@ -394,7 +413,7 @@ GIFEncoder.prototype.findClosestRGB = function(r, g, b, used) {
     var dg = g - (this.colorTab[i++] & 0xff);
     var db = b - (this.colorTab[i++] & 0xff);
     var d = dr * dr + dg * dg + db * db;
-    if ((!used || this.usedEntry[index]) && (d < dmin)) {
+    if ((!used || this.usedEntry[index]) && d < dmin) {
       dmin = d;
       minpos = index;
     }
@@ -453,7 +472,7 @@ GIFEncoder.prototype.writeGraphicCtrlExt = function() {
     0 | // 1:3 reserved
     disp | // 4:6 disposal
     0 | // 7 user input - 0 = none
-    transp // 8 transparency flag
+      transp // 8 transparency flag
   );
 
   this.writeShort(this.delay); // delay x 1/100 sec
@@ -482,7 +501,7 @@ GIFEncoder.prototype.writeImageDesc = function() {
       0 | // 2 interlace - 0=no
       0 | // 3 sorted - 0=no
       0 | // 4-5 reserved
-      this.palSize // 6-8 size of color table
+        this.palSize // 6-8 size of color table
     );
   }
 };
@@ -500,7 +519,7 @@ GIFEncoder.prototype.writeLSD = function() {
     0x80 | // 1 : global color table flag = 1 (gct used)
     0x70 | // 2-4 : color resolution = 7
     0x00 | // 5 : gct sort flag = 0
-    this.palSize // 6-8 : gct size
+      this.palSize // 6-8 : gct size
   );
 
   this.out.writeByte(0); // background color index
@@ -526,14 +545,13 @@ GIFEncoder.prototype.writeNetscapeExt = function() {
 */
 GIFEncoder.prototype.writePalette = function() {
   this.out.writeBytes(this.colorTab);
-  var n = (3 * 256) - this.colorTab.length;
-  for (var i = 0; i < n; i++)
-    this.out.writeByte(0);
+  var n = 3 * 256 - this.colorTab.length;
+  for (var i = 0; i < n; i++) this.out.writeByte(0);
 };
 
 GIFEncoder.prototype.writeShort = function(pValue) {
-  this.out.writeByte(pValue & 0xFF);
-  this.out.writeByte((pValue >> 8) & 0xFF);
+  this.out.writeByte(pValue & 0xff);
+  this.out.writeByte((pValue >> 8) & 0xff);
 };
 
 /*
